@@ -1038,25 +1038,26 @@ class Page extends WireData implements \Countable, WireMatchable {
 					}
 				}
 
-				// Use single strpbrk call to detect any special character, replacing up to 6 strpos calls.
-				// strpbrk returns the string starting from the first match, or false if none found.
-				$special = strpbrk($key, '{|[._');
+				// Use strpbrk as a fast gate: if the key contains no special characters at all,
+				// skip all the format-detection checks entirely. When it does contain special
+				// characters, use individual strpos calls in the correct priority order since
+				// strpbrk finds the first *positional* match, not the first *logical* check.
+				$hasSpecial = strpbrk($key, '{|[._');
 
-				if($special !== false) {
+				if($hasSpecial !== false) {
 					// key has formatting beyond just a field/property name
-					$firstSpecial = $special[0];
 
-					if($firstSpecial === '{' && strpos($key, '}')) {
+					if(strpos($key, '{') !== false && strpos($key, '}')) {
 						// populate a formatted string with {tag} vars
 						return $this->getMarkup($key);
 					}
 
-					if($firstSpecial === '|' || strpos($key, '|') !== false) {
+					if(strpos($key, '|') !== false) {
 						$value = $this->values()->getFieldFirstValue($this, $key);
 						if($value !== null) return $value;
 					}
 
-					if($firstSpecial === '[' || strpos($key, '[') !== false) {
+					if(strpos($key, '[') !== false) {
 						return $this->values()->getBracketValue($this, $key);
 					}
 
@@ -1069,7 +1070,7 @@ class Page extends WireData implements \Countable, WireMatchable {
 					}
 
 					// check if it's a field.subfield property
-					if($firstSpecial === '.' || strpos($key, '.') !== false) {
+					if(strpos($key, '.') !== false) {
 						return $this->values()->getDotValue($this, $key);
 					}
 
