@@ -169,9 +169,11 @@ class WireData extends Wire implements \IteratorAggregate, \ArrayAccess {
 	 */
 	public function get($key) {
 		if(is_object($key)) $key = "$key";
-		if(array_key_exists($key, $this->data)) return $this->data[$key]; 
-		if(strpos($key, '|')) {
-			$keys = explode('|', $key); 
+		if(array_key_exists($key, $this->data)) return $this->data[$key];
+		// Only check for pipe-separated keys if the key actually contains a pipe character.
+		// Use strpos with !== false for correctness (pipe at position 0 would be falsy with just strpos).
+		if(isset($key[1]) && strpos($key, '|') !== false) {
+			$keys = explode('|', $key);
 			foreach($keys as $k) {
 				/** @noinspection PhpAssignmentInConditionInspection */
 				if($value = $this->get($k)) return $value;

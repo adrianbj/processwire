@@ -1012,15 +1012,16 @@ class Session extends Wire implements \IteratorAggregate {
 			$failReason = 'Blocked login attempt';
 
 		} else if(!$user || !$user->id) {
-			$failReason = 'Unknown user';
-			
+			// Generic message to prevent user enumeration
+			$failReason = 'Invalid login';
+
 		} else if($user->id == $guestUserID) {
-			$failReason = 'Guest user may not login';
-			
+			$failReason = 'Invalid login';
+
 		} else if(!$this->allowLogin($name, $user)) {
 			$failReason = 'Login not allowed';
-			
-		} else if($force === true || $this->authenticate($user, $pass)) { 
+
+		} else if($force === true || $this->authenticate($user, $pass)) {
 
 			$this->trackChange('login', $this->wire()->user, $user); 
 			session_regenerate_id(true);
@@ -1057,16 +1058,17 @@ class Session extends Wire implements \IteratorAggregate {
 			$fail = false;
 
 		} else {
-			// authentication failed
-			$failReason = 'Invalid password';
+			// authentication failed - generic message to prevent user enumeration
+			$failReason = 'Invalid login';
 		}
 		
 		if($fail) {
+			$this->recordFailedLoginAttempt($name);
 			$this->loginFailure($name, $failReason);
 			$user = null;
 		}
 
-		return $user; 
+		return $user;
 	}
 
 	/**
@@ -1149,17 +1151,106 @@ class Session extends Wire implements \IteratorAggregate {
 
 	/**
 	 * Allow login attempt for given name at all?
-	 * 
-	 * This method does nothing and is purely for hooks to modify return value. 
-	 * 
+	 *
+	 * Provides built-in rate limiting for login attempts. By default, allows a maximum of
+	 * $config->loginMaxAttempts (default 5) failed attempts per username or IP within
+	 * $config->loginAttemptWindow (default 600) seconds. After exceeding the limit, further
+	 * attempts are blocked until the window expires.
+	 *
 	 * #pw-hooker
-	 * 
+	 *
 	 * @param string $name
 	 * @return bool
-	 * 
+	 *
 	 */
 	public function ___allowLoginAttempt($name) {
-		return strlen($name) > 0;
+		if(!strlen($name)) return false;
+
+		$config = $this->wire()->config;
+		$maxAttempts = $config->get('loginMaxAttempts');
+		$window = $config->get('loginAttemptWindow');
+
+		// If rate limiting config is not set, use safe defaults
+		if($maxAttempts === null) $maxAttempts = 5;
+		if($window === null) $window = 600;
+
+		// If rate limiting is explicitly disabled (set to 0), allow attempt
+		if($maxAttempts <= 0) return true;
+
+		$ip = $this->getIP();
+		$now = time();
+		$sessionKey = '_loginAttempts';
+
+		// Get existing attempt log from session-independent storage (cache)
+		$cache = $this->wire()->cache;
+		if(!$cache) return true; // cache not available, allow attempt
+
+		$cacheKey = 'Session.loginAttempts';
+		$attempts = $cache->get($cacheKey);
+		if(!is_array($attempts)) $attempts = array();
+
+		// Clean out expired entries
+		foreach($attempts as $key => $entries) {
+			$attempts[$key] = array_filter($entries, function($ts) use ($now, $window) {
+				return ($now - $ts) < $window;
+			});
+			if(empty($attempts[$key])) unset($attempts[$key]);
+		}
+
+		// Check attempts by username
+		$nameKey = 'user_' . md5(strtolower($name));
+		$nameAttempts = isset($attempts[$nameKey]) ? count($attempts[$nameKey]) : 0;
+
+		// Check attempts by IP
+		$ipKey = 'ip_' . md5($ip);
+		$ipAttempts = isset($attempts[$ipKey]) ? count($attempts[$ipKey]) : 0;
+
+		// Block if either username or IP has exceeded the limit
+		if($nameAttempts >= $maxAttempts || $ipAttempts >= ($maxAttempts * 3)) {
+			// Save cleaned attempts back to cache
+			$cache->save($cacheKey, $attempts, $window);
+			return false;
+		}
+
+		return true;
+	}
+
+	/**
+	 * Record a failed login attempt for rate limiting
+	 *
+	 * Called internally after a login failure to track attempts.
+	 *
+	 * @param string $name Username that was attempted
+	 *
+	 */
+	protected function recordFailedLoginAttempt($name) {
+		$config = $this->wire()->config;
+		$maxAttempts = $config->get('loginMaxAttempts');
+		if($maxAttempts !== null && $maxAttempts <= 0) return; // rate limiting disabled
+
+		$window = $config->get('loginAttemptWindow');
+		if($window === null) $window = 600;
+
+		$cache = $this->wire()->cache;
+		if(!$cache) return;
+
+		$ip = $this->getIP();
+		$now = time();
+		$cacheKey = 'Session.loginAttempts';
+		$attempts = $cache->get($cacheKey);
+		if(!is_array($attempts)) $attempts = array();
+
+		// Record attempt by username
+		$nameKey = 'user_' . md5(strtolower($name));
+		if(!isset($attempts[$nameKey])) $attempts[$nameKey] = array();
+		$attempts[$nameKey][] = $now;
+
+		// Record attempt by IP
+		$ipKey = 'ip_' . md5($ip);
+		if(!isset($attempts[$ipKey])) $attempts[$ipKey] = array();
+		$attempts[$ipKey][] = $now;
+
+		$cache->save($cacheKey, $attempts, $window);
 	}
 
 	/**
@@ -1357,7 +1448,10 @@ class Session extends Wire implements \IteratorAggregate {
 	 *
 	 */
 	public function ___redirect($url, $status = 301) {
-		
+
+		// Strip newline characters to prevent HTTP header injection
+		$url = str_replace(array("\r", "\n", "\0"), '', $url);
+
 		$page = $this->wire()->page;
 
 		if($status === true || "$status" === "301" || "$status" === "1") {

@@ -669,7 +669,18 @@ class PagesLoader extends Wire {
 		
 		unset($rows['pageArray']);
 
+		// Pre-compute which column keys contain '__' (joined field columns) vs native columns.
+		// Column names are consistent across all rows, so classify once instead of per-cell strpos.
+		$joinedColKeys = null;
+
 		foreach($rows as $row) {
+
+			if($joinedColKeys === null) {
+				$joinedColKeys = array();
+				foreach(array_keys($row) as $_ck) {
+					if(strpos($_ck, '__') !== false) $joinedColKeys[$_ck] = true;
+				}
+			}
 			
 			$page = $useCache ? $this->pages->getCache($row['id']) : null;
 			$tid = (int) $row['templates_id'];
@@ -715,9 +726,8 @@ class PagesLoader extends Wire {
 			}
 
 			foreach($row as $key => $value) {
-				if(strpos($key, '__')) {
+				if(isset($joinedColKeys[$key])) {
 					if($value === null) {
-						// $row[$key] = 'null'; // ensure detected by later isset in foreach($joinFields)
 						$row[$key] = new NullField();
 					} else {
 						$page->setFieldValue($key, $value, false);
@@ -1312,10 +1322,13 @@ class PagesLoader extends Wire {
 			$query->from('pages');
 			if($joinSortfield) $query->leftjoin('pages_sortfields ON pages_sortfields.pages_id=pages.id');
 
+			// Convert joinFields to associative array for O(1) lookups instead of O(n) in_array
+			$joinFieldsMap = !empty($options['joinFields']) ? array_flip($options['joinFields']) : array();
+
 			if($options['autojoin'] && $this->autojoin) {
 				foreach($fields as $field) {
 					/** @var Field $field */
-					if(!empty($options['joinFields']) && in_array($field->name, $options['joinFields'])) {
+					if(!empty($joinFieldsMap) && isset($joinFieldsMap[$field->name])) {
 						// joinFields option specified to force autojoin this field
 					} else {
 						// check if autojoin not enabled for field
@@ -2319,8 +2332,9 @@ class PagesLoader extends Wire {
 	public function preloadAllFields(Page $page, $options = array()) {
 		$fieldNames = [];
 		$skipFieldNames = isset($options['skipFieldNames']) ? $options['skipFieldNames'] : false;
+		$skipFieldNamesMap = $skipFieldNames ? array_flip($skipFieldNames) : array();
 		foreach($page->template->fieldgroup as $field) {
-			if($skipFieldNames && in_array($field->name, $skipFieldNames)) continue;
+			if(!empty($skipFieldNamesMap) && isset($skipFieldNamesMap[$field->name])) continue;
 			$fieldNames[] = $field->name;
 		}
 		return $this->preloadFields($page, $fieldNames, $options);
@@ -2389,18 +2403,24 @@ class PagesLoader extends Wire {
 		}
 		
 		if(!$error) {
-			$ref = new \ReflectionClass($fieldtype);
+			// Cache ReflectionClass instances to avoid re-creating them per field per page
+			static $reflectionCache = [];
+			$ftClass = get_class($fieldtype);
+			if(!isset($reflectionCache[$ftClass])) {
+				$reflectionCache[$ftClass] = new \ReflectionClass($fieldtype);
+			}
+			$ref = $reflectionCache[$ftClass];
 			// identify parent class that implements loadPageField method
-			$info = $ref->getMethod('___loadPageField'); 
+			$info = $ref->getMethod('___loadPageField');
 			$class = wireClassName($info->class); 
 			// whitelist of classes with custom loadPageField methods we support
-			$rootClasses = [ 
-				'Fieldtype', 
-				'FieldtypeMulti', 
-				'FieldtypeTextarea', 
-				'FieldtypeTextareaLanguage' 
-			];
-			if(!in_array($class, $rootClasses)) {
+			$rootClasses = array(
+				'Fieldtype' => true,
+				'FieldtypeMulti' => true,
+				'FieldtypeTextarea' => true,
+				'FieldtypeTextareaLanguage' => true,
+			);
+			if(!isset($rootClasses[$class])) {
 				$error = "$shortName: Has custom loader";
 			}
 		}

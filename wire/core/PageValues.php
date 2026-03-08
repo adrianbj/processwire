@@ -1022,7 +1022,8 @@ class PageValues extends Wire {
 
 		if(!$page->template()) {
 			$config = $page->wire()->config;
-			$name = strpos($key, '__') ? substr($key, 0, strpos($key, '__')) : $key;
+			$dblPos = strpos($key, '__');
+			$name = $dblPos !== false ? substr($key, 0, $dblPos) : $key;
 			$error = "You must assign a template to page $page before setting '$name' field.";
 			if($config->debug) {
 				// allow page to proceed in debug mode so that it's possible to delete it if needed

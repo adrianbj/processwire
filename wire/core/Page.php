@@ -1031,34 +1031,36 @@ class Page extends WireData implements \Countable, WireMatchable {
 				if($key && isset($this->settings[(string)$key])) return $this->settings[$key];
 				if($key === 'meta' && !$this->wire()->fields->get('meta')) return $this->meta(); // always WireDataDB
 			
-				$ulpos = strpos($key, '_');
-				
-				if($ulpos === 0 && substr($key, -1) === '_' && !$this->wire()->fields->get($key)) {
+				// Use direct character access for renderField prefix check (O(1) vs strpos)
+				if(isset($key[0]) && $key[0] === '_' && substr($key, -1) === '_' && !$this->wire()->fields->get($key)) {
 					if($this->wire()->sanitizer->fieldName($key) === $key) {
 						return $this->renderField(substr($key, 1, -1));
 					}
 				}
-				
-				$k = $ulpos ? str_replace('_', '', $key) : $key;
-			
-				if(!ctype_alnum("$k")) {
+
+				// Use single strpbrk call to detect any special character, replacing up to 6 strpos calls.
+				// strpbrk returns the string starting from the first match, or false if none found.
+				$special = strpbrk($key, '{|[._');
+
+				if($special !== false) {
 					// key has formatting beyond just a field/property name
-					
-					if(strpos($key, '{') !== false && strpos($key, '}')) {
+					$firstSpecial = $special[0];
+
+					if($firstSpecial === '{' && strpos($key, '}')) {
 						// populate a formatted string with {tag} vars
 						return $this->getMarkup($key);
 					}
 
-					if(strpos($key, '|') !== false) {
+					if($firstSpecial === '|' || strpos($key, '|') !== false) {
 						$value = $this->values()->getFieldFirstValue($this, $key);
-						if($value !== null) return $value; 
+						if($value !== null) return $value;
 					}
 
-					if(strpos($key, '[')) { 
+					if($firstSpecial === '[' || strpos($key, '[') !== false) {
 						return $this->values()->getBracketValue($this, $key);
 					}
 
-					$value = $this->values()->getFieldValue($this, $key); 
+					$value = $this->values()->getFieldValue($this, $key);
 					if($value !== null) return $value;
 
 					if(Selectors::stringHasOperator($key)) {
@@ -1067,16 +1069,16 @@ class Page extends WireData implements \Countable, WireMatchable {
 					}
 
 					// check if it's a field.subfield property
-					if(strpos($key, '.')) {
+					if($firstSpecial === '.' || strpos($key, '.') !== false) {
 						return $this->values()->getDotValue($this, $key);
 					}
-					
-					if($ulpos !== false && strpos($key, '_OR_')) {
+
+					if(strpos($key, '_OR_') !== false) {
 						// convert '_OR_' to '|'
 						$value = $this->values()->getFieldFirstValue($this, str_replace('_OR_', '|', $key));
 						if($value !== null) return $value;
 					}
-					
+
 				} else {
 					$value = $this->values()->getFieldValue($this, $key);
 					if($value !== null) return $value;
