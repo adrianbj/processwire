@@ -133,12 +133,13 @@ class PageFinder extends Wire {
 		/**
 		 * Method to use when counting total records
 		 *
-		 * If 'count', total will be calculated using a COUNT(*).
-		 * If 'calc, total will calculate using SQL_CALC_FOUND_ROWS.
-		 * If blank or something else, method will be determined automatically.
-		 * 
+		 * If 'count', total will be calculated using a separate COUNT(*) query.
+		 * If 'calc', total will calculate using SQL_CALC_FOUND_ROWS (deprecated in MySQL 8.0.17+).
+		 * Default changed to 'count' as it is more efficient on large tables and
+		 * avoids the deprecated SQL_CALC_FOUND_ROWS in modern MySQL versions.
+		 *
 		 */
-		'getTotalType' => 'calc',
+		'getTotalType' => 'count',
 
 		/**
 		 * Only start loading pages after this ID
@@ -251,7 +252,7 @@ class PageFinder extends Wire {
 	 * @var string
 	 * 
 	 */
-	protected $getTotalType = 'calc';
+	protected $getTotalType = 'count';
 
 	/**
 	 * Total found
@@ -461,7 +462,7 @@ class PageFinder extends Wire {
 
 		// move getTotal option to a class property, after initStatusChecks
 		$this->getTotal = $options['getTotal'];
-		$this->getTotalType = $options['getTotalType'] == 'count' ? 'count' : 'calc';
+		$this->getTotalType = $options['getTotalType'] === 'calc' ? 'calc' : 'count';
 		
 		unset($options['getTotal']); // so we get a notice if we try to access it
 		

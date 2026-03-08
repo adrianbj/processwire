@@ -118,6 +118,32 @@ class WireUpload extends Wire {
 	protected $badExtensions = array('php', 'php3', 'phtml', 'exe', 'cfm', 'shtml', 'asp', 'pl', 'cgi', 'sh');
 
 	/**
+	 * Map of file extensions to expected MIME type prefixes for content-based validation
+	 *
+	 * @var array
+	 *
+	 */
+	protected $extensionMimeMap = array(
+		'jpg' => array('image/jpeg'),
+		'jpeg' => array('image/jpeg'),
+		'png' => array('image/png'),
+		'gif' => array('image/gif'),
+		'svg' => array('image/svg+xml', 'text/xml', 'text/html', 'text/plain', 'application/xml'),
+		'webp' => array('image/webp'),
+		'bmp' => array('image/bmp', 'image/x-ms-bmp'),
+		'pdf' => array('application/pdf'),
+		'doc' => array('application/msword'),
+		'docx' => array('application/vnd.openxmlformats-officedocument', 'application/zip'),
+		'xls' => array('application/vnd.ms-excel'),
+		'xlsx' => array('application/vnd.openxmlformats-officedocument', 'application/zip'),
+		'zip' => array('application/zip', 'application/x-zip'),
+		'mp3' => array('audio/mpeg', 'audio/mp3'),
+		'mp4' => array('video/mp4'),
+		'mov' => array('video/quicktime'),
+		'avi' => array('video/x-msvideo', 'video/avi'),
+	);
+
+	/**
 	 * Errors that occurred
 	 * 
 	 * @var array of strings
@@ -370,19 +396,53 @@ class WireUpload extends Wire {
 		if(strpos($extension, 'php') === 0) return false;
 		if(in_array($extension, $this->validExtensions)) return true; 
 		
-		return false; 
+		return false;
+	}
+
+	/**
+	 * Validate that file content MIME type matches its extension
+	 *
+	 * Uses finfo (fileinfo extension) to detect actual content type and compares
+	 * it against expected MIME types for the file extension. This prevents attacks
+	 * where a malicious file (e.g. PHP) is uploaded with a safe extension (e.g. .jpg).
+	 *
+	 * @param string $filename Full path to file on disk
+	 * @return bool True if MIME type matches extension or validation could not be performed
+	 *
+	 */
+	protected function isValidMimeType($filename) {
+		if(!function_exists('finfo_open')) return true; // finfo not available, skip
+		if(!is_file($filename)) return false;
+
+		$extension = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
+		if(!isset($this->extensionMimeMap[$extension])) return true; // unknown extension, skip MIME check
+
+		$finfo = finfo_open(FILEINFO_MIME_TYPE);
+		if(!$finfo) return true; // finfo failed to initialize
+
+		$detectedMime = finfo_file($finfo, $filename);
+		finfo_close($finfo);
+
+		if($detectedMime === false) return true; // detection failed, allow
+
+		$allowedMimes = $this->extensionMimeMap[$extension];
+		foreach($allowedMimes as $allowed) {
+			if(strpos($detectedMime, $allowed) === 0) return true;
+		}
+
+		return false;
 	}
 
 	/**
 	 * Is the given upload information valid?
-	 * 
+	 *
 	 * Also populates $this->errors
-	 * 
+	 *
 	 * @param string $name Filename
 	 * @param int $size Size in bytes
 	 * @param int $error Error code from PHP
 	 * @return bool
-	 * 
+	 *
 	 */
 	protected function isValidUpload($name, $size, $error) { 
 		
@@ -562,6 +622,14 @@ class WireUpload extends Wire {
 		}
 
 		$this->wire()->files->chmod($destination);
+
+		// Validate file content MIME type matches the extension to prevent disguised uploads
+		if(!$this->isValidMimeType($destination)) {
+			$fname = $this->wire()->sanitizer->name(basename($destination));
+			$this->error("$fname - " . $this->_('File content does not match its extension (possible disguised file)'));
+			$this->wire()->files->unlink($destination);
+			return false;
+		}
 
 		if($p['extension'] == 'zip' && ($this->maxFiles == 0) && $this->extractArchives) {
 			if($this->saveUploadZip($destination)) {

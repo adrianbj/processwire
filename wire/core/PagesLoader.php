@@ -2227,28 +2227,31 @@ class PagesLoader extends Wire {
 		// wake up loaded values and populate to $page
 		$pageIds = [];
 		
+		// Single pass: validate, transform sleep values, collect page reference IDs,
+		// and store field/fieldtype alongside sleep value to avoid redundant lookups later
+		$useMulti = $options['useFieldtypeMulti'];
+		$loadRefs = $options['loadPageRefs'];
+		$prepared = array(); // fieldName => [field, fieldtype, sleepValue]
+
 		foreach($data as $fieldName => $sleepValue) {
-			if(!isset($loadFields[$fieldName])) {
-				unset($data[$fieldName]);
-				continue;
-			}
+			if(!isset($loadFields[$fieldName])) continue;
+
 			$field = $loadFields[$fieldName];
 			$fieldtype = $field->type;
-			$cols = array_keys($sleepValue);
-			if(count($cols) === 1 && array_key_exists('data', $sleepValue)) {
+
+			// Simplify single-column data (avoid array_keys + count + array_key_exists)
+			if(is_array($sleepValue) && count($sleepValue) === 1 && isset($sleepValue['data'])) {
 				$sleepValue = $sleepValue['data'];
-			}	
-			if($sleepValue === null) {
-				unset($data[$fieldName]); 
-				continue; // force to getBlankValue in loop below this
 			}
-			if($options['useFieldtypeMulti'] && $fieldtype instanceof FieldtypeMulti) { 
-				if(strpos($sleepValue, FieldtypeMulti::multiValueSeparator) !== false) {
+			if($sleepValue === null) continue; // will get blank value below
+
+			if($useMulti && $fieldtype instanceof FieldtypeMulti) {
+				if(is_string($sleepValue) && strpos($sleepValue, FieldtypeMulti::multiValueSeparator) !== false) {
 					$sleepValue = explode(FieldtypeMulti::multiValueSeparator, $sleepValue);
 				}
 			}
-			if($fieldtype instanceof FieldtypePage && $sleepValue && $options['loadPageRefs']) {
-				if(!is_array($sleepValue)) $sleepValue = [ $sleepValue ];
+			if($loadRefs && $fieldtype instanceof FieldtypePage && $sleepValue) {
+				if(!is_array($sleepValue)) $sleepValue = array($sleepValue);
 				foreach($sleepValue as $pageId) {
 					$pageId = (int) $pageId;
 					if(!$pageId) continue;
@@ -2258,25 +2261,33 @@ class PagesLoader extends Wire {
 					if(!ctype_digit("$parentId")) $parentId = 0;
 					if(!ctype_digit("$templateId")) $templateId = 0;
 					$groupKey = "$parentId,$templateId";
-					if(!isset($pageIds[$groupKey])) $pageIds[$groupKey] = [];
-					$pageIds[$groupKey][$pageId] = $pageId; 
+					if(!isset($pageIds[$groupKey])) $pageIds[$groupKey] = array();
+					$pageIds[$groupKey][$pageId] = $pageId;
 				}
 			}
-			
-			$data[$fieldName] = $sleepValue;
+
+			$prepared[$fieldName] = array($field, $fieldtype, $sleepValue);
 		}
-	
-		// preload all pages in template or parent groups
+
+		// preload all referenced pages, batching unconstrained groups into a single query
 		if(count($pageIds)) {
+			$unconstrainedIds = array();
 			foreach($pageIds as $groupKey => $ids) {
 				list($parentId, $templateId) = explode(',', $groupKey);
-				$this->pages->getByID($ids, [ 'template' => $templateId, 'parent_id' => $parentId ]); 
+				if(!$parentId && !$templateId) {
+					$unconstrainedIds += $ids;
+				} else {
+					$this->pages->getByID($ids, array('template' => $templateId, 'parent_id' => $parentId));
+				}
+			}
+			if(!empty($unconstrainedIds)) {
+				$this->pages->getByID($unconstrainedIds);
 			}
 		}
-		
-		foreach($data as $fieldName => $sleepValue) {
-			$field = $loadFields[$fieldName];
-			$fieldtype = $field->type;
+
+		// Wakeup and assign values — field/fieldtype already resolved, no second lookup needed
+		foreach($prepared as $fieldName => $item) {
+			list($field, $fieldtype, $sleepValue) = $item;
 			$value = $fieldtype->wakeupValue($page, $field, $sleepValue);
 			$page->_parentSet($field->name, $value);
 			$loadedFields[$field->name] = $fieldName;
