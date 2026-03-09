@@ -4,7 +4,7 @@ require_once(dirname(__FILE__) . '/ProcessPageListRender.php');
 
 /**
  * JSON implementation of the Page List rendering
- * 
+ *
  * ProcessWire 3.x, Copyright 2024 by Ryan Cramer
  * https://processwire.com
  *
@@ -13,21 +13,21 @@ class ProcessPageListRenderJSON extends ProcessPageListRender {
 
 	/**
 	 * System page IDs used in this class
-	 * 
+	 *
 	 * @var array
-	 * 
+	 *
 	 */
 	protected $systemIDs = array();
 
 	/**
-	 * @var Role|null 
-	 * 
+	 * @var Role|null
+	 *
 	 */
 	protected $guestRole = null;
 
 	/**
 	 * Wired to ProcessWire
-	 * 
+	 *
 	 */
 	public function wired() {
 		$config = $this->wire()->config;
@@ -45,18 +45,18 @@ class ProcessPageListRenderJSON extends ProcessPageListRender {
 
 	/**
 	 * Render page/child
-	 * 
+	 *
 	 * @param Page $page
 	 * @return array
-	 * 
+	 *
 	 */
 	public function renderChild(Page $page) {
-		
+
 		$config = $this->wire()->config;
 
 		$outputFormatting = $page->outputFormatting;
 		$page->setOutputFormatting(true);
-		
+
 		$type = '';
 		$note = '';
 		$label = '';
@@ -76,18 +76,18 @@ class ProcessPageListRenderJSON extends ProcessPageListRender {
 			// if label is not overridden by a language pack, make $label blank to use the page title instead
 			if(in_array($label, array('Trash', 'Admin', '404 Page Not Found'))) $label = '';
 		}
-		
+
 		if(!$page->template->filenameExists()) {
 			$class[] = 'PageListNoFile';
 		}
-		
+
 		$accessParent = $page->getAccessParent();
-		
+
 		if($accessParent->id) {
 			if(!$this->guestRole) $this->guestRole = $this->wire()->roles->getGuestRole();
 			$accessTemplate = $accessParent->template;
 			$accessGuest = $accessTemplate ? $accessTemplate->hasRole($this->guestRole) : false;
-			
+
 			if(!$accessGuest) $class[] = 'PageListNotPublic';
 
 			if($accessParent === $page && $page->parent->id) {
@@ -105,7 +105,7 @@ class ProcessPageListRenderJSON extends ProcessPageListRender {
 						$icons[] = 'key';
 					}
 				}
-			} 
+			}
 		}
 
 		if($id == $config->trashPageID) {
@@ -115,18 +115,20 @@ class ProcessPageListRenderJSON extends ProcessPageListRender {
 			$icons = array('trash-o'); // override any other icons
 			$numChildren = $this->numChildren($page, false);
 			if($numChildren > 0 && !$this->superuser) {
-				// manually count quantity that are listable in the trash
+				// count only listable children in trash, uncache after to free memory
 				$numChildren = 0;
-				foreach($page->children("include=all") as $child) {
+				$trashChildren = $page->children("include=all");
+				foreach($trashChildren as $child) {
 					if($child->listable()) $numChildren++;
 				}
+				$this->wire()->pages->uncacheAll($trashChildren);
 			}
 			if(strpos($this->qtyType, 'total') !== false) {
 				$numTotal = $this->wire()->pages->trasher()->getTrashTotal();
 			} else {
 				$numTotal = $numChildren;
 			}
-			
+
 		} else {
 			if($page->hasStatus(Page::statusTemp)) $icons[] = 'bolt';
 			if($page->hasStatus(Page::statusLocked)) $icons[] = 'lock';
@@ -136,15 +138,15 @@ class ProcessPageListRenderJSON extends ProcessPageListRender {
 				$icons[] = 'trash';
 				$icons[] = 'exclamation-triangle';
 			}
-			
+
 			$numChildren = $this->numChildren($page, 1);
 			$numTotal = strpos($this->qtyType, 'total') !== false ? $page->numDescendants : $numChildren;
 		}
-		
+
 		if($label === '') $label = $this->getPageLabel($page);
-		
+
 		foreach($icons as $icon) {
-			$label .= wireIconMarkup("$icon fw PageListStatusIcon"); 
+			$label .= wireIconMarkup("$icon fw PageListStatusIcon");
 		}
 
 		$a = array(
@@ -152,7 +154,7 @@ class ProcessPageListRenderJSON extends ProcessPageListRender {
 			'label' => $label,
 			'status' => $page->status,
 			'numChildren' => $numChildren,
-			'numTotal' => $numTotal, 
+			'numTotal' => $numTotal,
 			'path' => $page->template->slashUrls || $id == 1 ? $page->path() : rtrim($page->path(), '/'),
 			'template' => $page->template->name,
 			'actions' => array_values($this->getPageActions($page)),
@@ -170,9 +172,9 @@ class ProcessPageListRenderJSON extends ProcessPageListRender {
 
 	/**
 	 * Render page list JSON
-	 * 
+	 *
 	 * @return string|array
-	 * 
+	 *
 	 */
 	public function render() {
 
@@ -183,7 +185,7 @@ class ProcessPageListRenderJSON extends ProcessPageListRender {
 		$id404 = $config->http404PageID;
 		$states = array();
 		$showHidden = true;
-		
+
 		if(!empty($this->hidePages)) {
 			$showHidden = false;
 			foreach($this->hidePagesNot as $state) {
@@ -195,11 +197,11 @@ class ProcessPageListRenderJSON extends ProcessPageListRender {
 		}
 
 		foreach($this->children as $page) {
-			
+
 			if(!$this->superuser && !$page->listable()) continue;
-			
+
 			$id = $page->id;
-			
+
 			if(isset($this->hidePages[$id]) && $id !== $idTrash && $id !== 1) {
 				// page hidden in page tree
 				if(!$showHidden) continue;
@@ -217,7 +219,7 @@ class ProcessPageListRenderJSON extends ProcessPageListRender {
 
 			$children[] = $this->renderChild($page);
 		}
-	
+
 		// add in the trash page if not present and allowed
 		if($this->page->id === 1 && !$this->superuser && !isset($extraPages[$idTrash]) && $this->getUseTrash()) {
 			$pageTrash = $this->wire()->pages->get($idTrash);
@@ -238,9 +240,9 @@ class ProcessPageListRenderJSON extends ProcessPageListRender {
 		);
 
 		if($this->getOption('getArray')) return $json;
-		
+
 		header("Content-Type: application/json;");
-		
+
 		return json_encode($json);
 	}
 

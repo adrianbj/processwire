@@ -207,7 +207,7 @@ class ProcessPageSearchLive extends Wire {
 	 * 
 	 */
 	public function setSearchTypesOrder(array $types) {
-		$this->searchTypesOrder = $types; 
+		$this->searchTypesOrder = array_flip($types);
 	}
 
 	/**
@@ -606,8 +606,10 @@ class ProcessPageSearchLive extends Wire {
 			if(!$module || (empty($result['items']) && empty($liveSearch['help']))) continue;
 			if(empty($result['total'])) $result['total'] = count($result['items']);
 		
-			if(!in_array($thisType, $this->searchTypesOrder)) $this->searchTypesOrder[] = $thisType;
-			$order = array_search($thisType, $this->searchTypesOrder);
+			if(!isset($this->searchTypesOrder[$thisType])) {
+				$this->searchTypesOrder[$thisType] = count($this->searchTypesOrder);
+			}
+			$order = $this->searchTypesOrder[$thisType];
 			$order = $order ? $order * 100 : 99;
 			
 			$title = empty($result['title']) ? "$info[title]" : "$result[title]";
@@ -659,8 +661,10 @@ class ProcessPageSearchLive extends Wire {
 		
 		if(empty($type) || $type === 'pages' || $type === 'trash' || $liveSearch['template']) {
 			// include pages in the search results
-			if(!in_array('pages', $this->searchTypesOrder)) $this->searchTypesOrder[] = 'pages';
-			$order = array_search('pages', $this->searchTypesOrder) * 100;
+			if(!isset($this->searchTypesOrder['pages'])) {
+				$this->searchTypesOrder['pages'] = count($this->searchTypesOrder);
+			}
+			$order = $this->searchTypesOrder['pages'] * 100;
 			foreach($this->findPages($liveSearch) as $item) {
 				$items[$order++] = $item;
 			}
@@ -668,8 +672,10 @@ class ProcessPageSearchLive extends Wire {
 
 		// use built-in modules search when appropriate
 		if($this->useType('modules', $type) && $this->wire()->user->isSuperuser()) {
-			if(!in_array('modules', $this->searchTypesOrder)) $this->searchTypesOrder[] = 'modules';
-			$order = array_search('modules', $this->searchTypesOrder) * 100;
+			if(!isset($this->searchTypesOrder['modules'])) {
+				$this->searchTypesOrder['modules'] = count($this->searchTypesOrder);
+			}
+			$order = $this->searchTypesOrder['modules'] * 100;
 			foreach($this->findModules($liveSearch, $modulesInfo) as $item) {
 				$items[$order++] = $item;
 			}

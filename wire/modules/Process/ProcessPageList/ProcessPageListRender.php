@@ -338,7 +338,7 @@ abstract class ProcessPageListRender extends Wire {
 		$icon = $this->getPageLabelIconMarkup($page, $label); // must be called
 		if(!empty($options['noIcon'])) $icon = '';
 		
-		while(strpos($label, '  ') !== false) $label = str_replace('  ', ' ', $label);
+		$label = preg_replace('/  +/', ' ', $label);
 	
 		if($formatLabel) {
 			$bracket1 = strpos($label, '{');
