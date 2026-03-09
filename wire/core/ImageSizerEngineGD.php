@@ -234,7 +234,8 @@ class ImageSizerEngineGD extends ImageSizerEngine {
 			$imageTemp = imagecreatetruecolor(imagesx($image), imagesy($image));  // create an intermediate memory image
 			$this->prepareImageLayer($imageTemp, $image);
 			imagecopy($imageTemp, $image, 0, 0, 0, 0, imagesx($image), imagesy($image)); // copy our initial image into the intermediate one
-			imagedestroy($image); // release the initial image
+			if(version_compare(PHP_VERSION, '8.0.0', '<')) imagedestroy($image); // release the initial image
+			$image = null;
 
 			// get crop values and create a new initial image
 			list($x, $y, $w, $h) = $this->cropExtra;
@@ -251,7 +252,7 @@ class ImageSizerEngineGD extends ImageSizerEngine {
 			$isModified = true;
 
 			// now release the intermediate image and update settings
-			imagedestroy($imageTemp);
+			if(version_compare(PHP_VERSION, '8.0.0', '<')) imagedestroy($imageTemp);
 			$imageTemp = null;
 			$this->setImageInfo(imagesx($image), imagesy($image));
 			// $this->cropping = false; // ?? set this to prevent overhead with the following manipulation ??
@@ -274,8 +275,10 @@ class ImageSizerEngineGD extends ImageSizerEngine {
 			
 			if(!$isModified && !$this->webpOnly && !$this->webpAdd && ($this->imageType == \IMAGETYPE_PNG || $this->imageType == \IMAGETYPE_GIF)) {
 				$result = @copy($srcFilename, $dstFilename);
-				if(isset($image) && is_resource($image)) @imagedestroy($image); // clean up
-				if(isset($image)) $image = null;
+				if(isset($image)) {
+					if(version_compare(PHP_VERSION, '8.0.0', '<')) @imagedestroy($image);
+					$image = null;
+				}
 				return $result; // early return !
 			}
 
@@ -346,14 +349,19 @@ class ImageSizerEngineGD extends ImageSizerEngine {
 				$finalWidth, // source width
 				$finalHeight // source height
 			);
-			imagedestroy($thumb2);
+			if(version_compare(PHP_VERSION, '8.0.0', '<')) imagedestroy($thumb2);
+			$thumb2 = null;
 		}
 
 		// early release of obsolete GD image object(s) to free memory before processing sharpening
-		if(isset($image) && is_resource($image)) @imagedestroy($image); // @horst
-		if(isset($thumb2) && is_resource($thumb2)) @imagedestroy($thumb2);
-		if(isset($image)) $image = null;
-		if(isset($thumb2)) $thumb2 = null;
+		if(isset($image)) {
+			if(version_compare(PHP_VERSION, '8.0.0', '<')) @imagedestroy($image);
+			$image = null;
+		}
+		if(isset($thumb2)) {
+			if(version_compare(PHP_VERSION, '8.0.0', '<')) @imagedestroy($thumb2);
+			$thumb2 = null;
+		}
 
 		// optionally apply sharpening to the final thumb
 		if($this->sharpening && $this->sharpening != 'none') { // @horst
@@ -418,8 +426,10 @@ class ImageSizerEngineGD extends ImageSizerEngine {
 		}
 		
 		// release the last GD image object
-		if(isset($thumb) && is_resource($thumb)) @imagedestroy($thumb);
-		if(isset($thumb)) $thumb = null;
+		if(isset($thumb)) {
+			if(version_compare(PHP_VERSION, '8.0.0', '<')) @imagedestroy($thumb);
+			$thumb = null;
+		}
 		if($result === null) $result = $this->webpResult; // if webpOnly option used
 
 		return $result;
@@ -769,8 +779,10 @@ class ImageSizerEngineGD extends ImageSizerEngine {
 				}
 			}
 		}
-		imagedestroy($imgCanvas);
-		imagedestroy($imgBlur);
+		if(version_compare(PHP_VERSION, '8.0.0', '<')) imagedestroy($imgCanvas);
+		if(version_compare(PHP_VERSION, '8.0.0', '<')) imagedestroy($imgBlur);
+		$imgCanvas = null;
+		$imgBlur = null;
 
 		return $img;
 	}
@@ -1049,7 +1061,7 @@ class ImageSizerEngineGD extends ImageSizerEngine {
 			$this->error($this->className() . ".$method(img, $value) returned fail", Notice::debug);
 		} else if($imgNew !== $img) {
 			// a new img object was created
-			imagedestroy($img);
+			if(version_compare(PHP_VERSION, '8.0.0', '<')) imagedestroy($img);
 			$img = $imgNew;
 			if($useTransparency) {
 				imagealphablending($img, true);
@@ -1071,7 +1083,8 @@ class ImageSizerEngineGD extends ImageSizerEngine {
 			if(!$success) $this->error("image{$ext}() failed", Notice::debug);
 		}
 
-		imagedestroy($img);
+		if(version_compare(PHP_VERSION, '8.0.0', '<')) imagedestroy($img);
+		$img = null;
 
 		return $success;
 	}

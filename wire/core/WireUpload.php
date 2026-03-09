@@ -421,7 +421,8 @@ class WireUpload extends Wire {
 		if(!$finfo) return true; // finfo failed to initialize
 
 		$detectedMime = finfo_file($finfo, $filename);
-		finfo_close($finfo);
+		if(version_compare(PHP_VERSION, '8.0.0', '<')) finfo_close($finfo);
+		unset($finfo);
 
 		if($detectedMime === false) return true; // detection failed, allow
 
