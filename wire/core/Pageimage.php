@@ -541,48 +541,268 @@ class Pageimage extends Pagefile {
 	protected function getImageInfoSVG($filename = '') {
 		$width = 0;
 		$height = 0;
+		$hasViewBox = false;
 		if(!$filename) $filename = $this->filename;
 		$xml = @file_get_contents($filename);
-		
+
 		// Disable external entity loading to prevent XXE attacks on uploaded SVGs
-		$xmlFlags = LIBXML_NONET | LIBXML_NOENT;
-		if(LIBXML_VERSION >= 20912) $xmlFlags |= LIBXML_NO_XXE;
-		if($xml && false !== ($a = @simplexml_load_string($xml, 'SimpleXMLElement', $xmlFlags))) {
-			$a = $a->attributes();
-			if((int) $a->width > 0) $width = (int) $a->width;
-			if((int) $a->height > 0) $height = (int) $a->height;
-			if((!$width || !$height) && $a->viewBox) {
-				$values = explode(' ', $a->viewBox);
+		$xmlFlags = \LIBXML_NONET | \LIBXML_NOENT;
+		if(defined('LIBXML_NO_XXE')) $xmlFlags |= \LIBXML_NO_XXE;
+		if($xml && false !== ($svg = @simplexml_load_string($xml, 'SimpleXMLElement', $xmlFlags))) {
+			$a = $svg->attributes();
+			$hasViewBox = !empty($a->viewBox);
+
+			// Try width/height attributes with unit parsing (handles "200px", "10cm", floats, etc.)
+			if($a->width) $width = $this->parseSVGDimension((string) $a->width);
+			if($a->height) $height = $this->parseSVGDimension((string) $a->height);
+
+			// Fallback to viewBox if width/height not resolved
+			if((!$width || !$height) && $hasViewBox) {
+				// Handle space-separated, comma-separated, and mixed separators
+				$values = preg_split('/[\s,]+/', trim((string) $a->viewBox));
 				if(count($values) === 4) {
-					$width = (int) round($values[2]);
-					$height = (int) round($values[3]);
+					$vbWidth = (float) $values[2];
+					$vbHeight = (float) $values[3];
+					if($vbWidth > 0 && $vbHeight > 0) {
+						if(!$width) $width = (int) round($vbWidth);
+						if(!$height) $height = (int) round($vbHeight);
+					}
+				}
+			}
+
+			// Fallback to inline style attribute
+			if((!$width || !$height) && $a->style) {
+				$style = (string) $a->style;
+				if(!$width && preg_match('/(?:^|;)\s*width\s*:\s*([^;]+)/i', $style, $m)) {
+					$width = $this->parseSVGDimension(trim($m[1]));
+				}
+				if(!$height && preg_match('/(?:^|;)\s*height\s*:\s*([^;]+)/i', $style, $m)) {
+					$height = $this->parseSVGDimension(trim($m[1]));
+				}
+			}
+
+			// Fallback to bounding box computed from child element coordinates
+			if(!$width || !$height) {
+				$bbox = $this->getSVGBoundingBox($svg);
+				if($bbox[0] > 0 && $bbox[1] > 0) {
+					if(!$width) $width = $bbox[0];
+					if(!$height) $height = $bbox[1];
 				}
 			}
 		}
-		
+
 		if((!$width || !$height) && (extension_loaded('imagick') || class_exists('\IMagick'))) {
 			try {
 				$imagick = new \Imagick();
 				$imagick->readImage($filename);
-				$width = $imagick->getImageWidth();
-				$height = $imagick->getImageHeight();
+				if(!$width) $width = $imagick->getImageWidth();
+				if(!$height) $height = $imagick->getImageHeight();
 			} catch(\Exception $e) {
 				// fallback to 100%
 			}
 		}
-		
+
+		// Fix SVG file when missing required attributes for proper browser rendering
+		if($xml) {
+			$needsViewBox = !$hasViewBox && is_int($width) && is_int($height) && $width > 0 && $height > 0;
+			$needsXmlns = stripos($xml, 'xmlns') === false;
+			if($needsViewBox || $needsXmlns) {
+				$this->fixSVGAttributes($filename, $xml, $needsViewBox, $needsXmlns, $width, $height);
+			}
+		}
+
 		if($width < 1) $width = '100%';
 		if($height < 1) $height = '100%';
-		
+
 		return array(
-			'width' => $width, 
+			'width' => $width,
 			'height' => $height
-		); 
+		);
 	}
-	
+
 	/**
-	 * Return an image (Pageimage) sized/cropped to the specified dimensions. 
-	 * 
+	 * Parse an SVG dimension value string and return pixel value as integer
+	 *
+	 * Handles values like "200", "200px", "10cm", "5in", "72pt", "10mm".
+	 * Returns 0 for relative units (em, rem, %, etc.) that cannot be
+	 * converted to pixels without a rendering context.
+	 *
+	 * Conversion assumes 96 DPI per CSS spec:
+	 * 1in = 96px, 1cm = 96/2.54px, 1mm = 96/25.4px, 1pt = 96/72px, 1pc = 96/6px
+	 *
+	 * #pw-internal
+	 *
+	 * @param string $value SVG dimension value string
+	 * @return int Pixel value or 0 if not parseable to absolute pixels
+	 *
+	 */
+	protected function parseSVGDimension($value) {
+		$value = trim($value);
+		if(!strlen($value)) return 0;
+		if(!preg_match('/^([0-9]*\.?[0-9]+)\s*(px|pt|pc|cm|mm|in|)$/i', $value, $m)) {
+			return 0; // relative unit (em, rem, %, vw, vh, etc.) or unparseable
+		}
+		$num = (float) $m[1];
+		$unit = strtolower($m[2]);
+		switch($unit) {
+			case '':
+			case 'px': break;
+			case 'pt': $num = $num * (96.0 / 72.0); break;
+			case 'pc': $num = $num * (96.0 / 6.0); break;
+			case 'in': $num = $num * 96.0; break;
+			case 'cm': $num = $num * (96.0 / 2.54); break;
+			case 'mm': $num = $num * (96.0 / 25.4); break;
+		}
+		$result = (int) round($num);
+		return $result > 0 ? $result : 0;
+	}
+
+	/**
+	 * Compute bounding box dimensions from SVG child element coordinates
+	 *
+	 * Walks common SVG shape elements (rect, circle, ellipse, line, image, text,
+	 * polygon, polyline, path) and computes the maximum extents to estimate
+	 * the overall SVG dimensions when no width/height/viewBox is specified.
+	 *
+	 * #pw-internal
+	 *
+	 * @param \SimpleXMLElement $svg Root SVG element
+	 * @return array [width, height] as integers, or [0, 0] if no elements found
+	 *
+	 */
+	protected function getSVGBoundingBox($svg) {
+		$maxX = 0;
+		$maxY = 0;
+		$found = false;
+
+		// Register SVG namespace for xpath queries
+		$svg->registerXPathNamespace('svg', 'http://www.w3.org/2000/svg');
+
+		// rect, image, text, foreignObject, use: x + width, y + height
+		foreach(array('rect', 'image', 'text', 'foreignObject', 'use') as $tag) {
+			foreach($svg->xpath("//svg:$tag | //$tag") as $el) {
+				$a = $el->attributes();
+				$x = (float) $a->x + (float) $a->width;
+				$y = (float) $a->y + (float) $a->height;
+				if($x > $maxX) $maxX = $x;
+				if($y > $maxY) $maxY = $y;
+				$found = true;
+			}
+		}
+
+		// circle: cx + r, cy + r
+		foreach($svg->xpath('//svg:circle | //circle') as $el) {
+			$a = $el->attributes();
+			$x = (float) $a->cx + (float) $a->r;
+			$y = (float) $a->cy + (float) $a->r;
+			if($x > $maxX) $maxX = $x;
+			if($y > $maxY) $maxY = $y;
+			$found = true;
+		}
+
+		// ellipse: cx + rx, cy + ry
+		foreach($svg->xpath('//svg:ellipse | //ellipse') as $el) {
+			$a = $el->attributes();
+			$x = (float) $a->cx + (float) $a->rx;
+			$y = (float) $a->cy + (float) $a->ry;
+			if($x > $maxX) $maxX = $x;
+			if($y > $maxY) $maxY = $y;
+			$found = true;
+		}
+
+		// line: max of x1/x2, max of y1/y2
+		foreach($svg->xpath('//svg:line | //line') as $el) {
+			$a = $el->attributes();
+			$x = max((float) $a->x1, (float) $a->x2);
+			$y = max((float) $a->y1, (float) $a->y2);
+			if($x > $maxX) $maxX = $x;
+			if($y > $maxY) $maxY = $y;
+			$found = true;
+		}
+
+		// polygon, polyline: parse points attribute
+		foreach($svg->xpath('//svg:polygon | //polygon | //svg:polyline | //polyline') as $el) {
+			$points = trim((string) $el->attributes()->points);
+			if(!strlen($points)) continue;
+			$pairs = preg_split('/[\s,]+/', $points);
+			for($i = 0; $i < count($pairs) - 1; $i += 2) {
+				$x = (float) $pairs[$i];
+				$y = (float) $pairs[$i + 1];
+				if($x > $maxX) $maxX = $x;
+				if($y > $maxY) $maxY = $y;
+			}
+			$found = true;
+		}
+
+		// path: extract coordinate values from absolute d commands
+		foreach($svg->xpath('//svg:path | //path') as $el) {
+			$d = (string) $el->attributes()->d;
+			if(!strlen($d)) continue;
+			if(preg_match_all('/[MLHVCSQTA][^MLHVCSQTAZ]*/i', $d, $cmds)) {
+				foreach($cmds[0] as $cmd) {
+					$letter = $cmd[0];
+					// Skip relative commands (lowercase) as they need cumulative tracking
+					if($letter >= 'a' && $letter <= 'z') continue;
+					if(preg_match_all('/-?[0-9]*\.?[0-9]+/', $cmd, $nums)) {
+						$vals = $nums[0];
+						if($letter === 'H') {
+							foreach($vals as $v) {
+								if((float) $v > $maxX) $maxX = (float) $v;
+							}
+						} else if($letter === 'V') {
+							foreach($vals as $v) {
+								if((float) $v > $maxY) $maxY = (float) $v;
+							}
+						} else {
+							for($i = 0; $i < count($vals) - 1; $i += 2) {
+								$x = (float) $vals[$i];
+								$y = (float) $vals[$i + 1];
+								if($x > $maxX) $maxX = $x;
+								if($y > $maxY) $maxY = $y;
+							}
+						}
+					}
+				}
+			}
+			$found = true;
+		}
+
+		if(!$found || ($maxX <= 0 && $maxY <= 0)) return array(0, 0);
+
+		return array((int) ceil($maxX), (int) ceil($maxY));
+	}
+
+	/**
+	 * Fix missing attributes on an SVG file for proper browser rendering
+	 *
+	 * Adds xmlns and/or viewBox to the root <svg> tag when missing.
+	 * Without xmlns, browsers cannot render SVGs loaded as external files
+	 * (via <img> tags). Without viewBox, browsers cannot scale SVG content.
+	 *
+	 * #pw-internal
+	 *
+	 * @param string $filename Path to SVG file
+	 * @param string $xml Raw SVG file contents
+	 * @param bool $addViewBox Whether to add viewBox attribute
+	 * @param bool $addXmlns Whether to add xmlns attribute
+	 * @param int $width Computed width in pixels
+	 * @param int $height Computed height in pixels
+	 *
+	 */
+	protected function fixSVGAttributes($filename, $xml, $addViewBox, $addXmlns, $width, $height) {
+		$attrs = '';
+		if($addXmlns) $attrs .= ' xmlns="http://www.w3.org/2000/svg"';
+		if($addViewBox) $attrs .= " viewBox=\"0 0 $width $height\"";
+		$count = 0;
+		$xml = preg_replace('/(<svg\b)/i', '$1' . $attrs, $xml, 1, $count);
+		if($count && $xml !== false) {
+			@file_put_contents($filename, $xml);
+		}
+	}
+
+	/**
+	 * Return an image (Pageimage) sized/cropped to the specified dimensions.
+	 *
 	 * `$thumb = $image->size($width, $height, $options);`
 	 * 
 	 * The default behavior of this method is to simply create and return a new resized version of the image,
