@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git:*)",
+      "Bash(grep -r \"$input->get\\(''''id''''\\)\" wire/modules/Process/ --include=\"*.php\" -l)",
+      "Bash(grep -n \"public function.*viewable\\\\|public function.*editable\" /Users/adrianjones/Documents/GitHub/processwire/wire/core/*.php)",
+      "Bash(grep -r \"$input->post\\(''''id''''\\)\" wire/modules/Process/ --include=\"*.php\" -l)",
+      "Bash(grep:*)",
+      "Bash(gh issue:*)"
+    ]
+  }
+}

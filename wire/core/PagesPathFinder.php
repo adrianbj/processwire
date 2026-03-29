@@ -90,9 +90,19 @@ class PagesPathFinder extends Wire {
 
 	/**
 	 * @var bool|null
-	 * 
+	 *
 	 */
 	protected $admin = null;
+
+	/**
+	 * Chain of matched pages from applyPagesRow(), indexed by depth (0=first, etc.)
+	 *
+	 * Each entry is an array with: id, parent_id, templates_id, status, name
+	 *
+	 * @var array
+	 *
+	 */
+	protected $matchedPages = array();
 
 	/**
 	 * @var array|null
@@ -140,6 +150,7 @@ class PagesPathFinder extends Wire {
 		$this->result = $this->getBlankResult(array('request' => $path));
 		$this->template = null;
 		$this->admin = null;
+		$this->matchedPages = array();
 		
 		if(empty($this->pageNameCharset)) {
 			$this->pageNameCharset = $this->wire()->config->pageNameCharset;
@@ -431,14 +442,17 @@ class PagesPathFinder extends Wire {
 			$nameDefault = $this->pageNameToUTF8($row["{$key}_name"]);
 			$namesByLanguage['default'][] = $nameDefault;
 
-			// this is intentionally re-populated on each iteration 
+			// this is intentionally re-populated on each iteration
 			$result['page'] = array(
 				'id' => $id,
 				'parent_id' => (int) $row["{$key}_parent_id"],
 				'templates_id' => (int) $row["{$key}_templates_id"],
 				'status' => (int) $row["{$key}_status"],
-				'name' => $nameDefault, 
+				'name' => $nameDefault,
 			);
+
+			// store in matched pages chain for potential URL segment fallback
+			$this->matchedPages[] = $result['page'];
 
 			if($this->verbose && $nameDefault === $name) {
 				$result['parts'][] = array(
@@ -763,6 +777,121 @@ class PagesPathFinder extends Wire {
 	}
 
 	/**
+	 * Can we attempt to rewind matched pages into URL segments?
+	 *
+	 * Returns true when URL segment validation failed (urlSegmentsOFF or urlSegmentsBAD)
+	 * and there are parent pages in the matched chain to fall back to.
+	 *
+	 * @return bool
+	 *
+	 */
+	protected function canRewindUrlSegments() {
+		$errors = $this->result['errors'];
+		$hasUrlSegmentError = isset($errors['urlSegmentsOFF']) || isset($errors['urlSegmentsBAD']);
+		return $hasUrlSegmentError && count($this->matchedPages) >= 1;
+	}
+
+	/**
+	 * Rewind matched pages into URL segments and try parent page templates
+	 *
+	 * When URL segments fail validation on the deepest matched page, this method
+	 * moves that page's name (and potentially more) into URL segments and checks
+	 * if a parent page's template can handle the combined URL segment string.
+	 * This ensures real child pages don't break multi-path URL segment patterns
+	 * defined on parent templates. (See processwire/processwire-issues#1333)
+	 *
+	 * @return string|false Path string on success, false on failure
+	 *
+	 */
+	protected function rewindUrlSegments() {
+
+		$result = &$this->result;
+		$templates = $this->wire()->templates;
+
+		// save original state in case all rewind attempts fail
+		$origPage = $result['page'];
+		$origUrlSegments = $result['urlSegments'];
+		$origUrlSegmentStr = $result['urlSegmentStr'];
+		$origErrors = $result['errors'];
+		$origTemplate = $this->template;
+		$origAdmin = $this->admin;
+		$origPathAdd = $result['pathAdd'];
+		$origRedirect = $result['redirect'];
+
+		// start rewinding from the deepest matched page
+		$rewindSegments = $result['urlSegments'];
+
+		for($i = count($this->matchedPages) - 1; $i >= 0; $i--) {
+
+			$childPage = $this->matchedPages[$i];
+
+			if($i > 0) {
+				// parent is in the matched chain
+				$parentPage = $this->matchedPages[$i - 1];
+			} else {
+				// first matched page — look up its parent from the database
+				$parentId = (int) $childPage['parent_id'];
+				if(!$parentId) continue;
+				$parentPageObj = $this->pages->get($parentId);
+				if(!$parentPageObj || !$parentPageObj->id || !$parentPageObj->template) continue;
+				$parentPage = array(
+					'id' => $parentPageObj->id,
+					'parent_id' => $parentPageObj->parent_id,
+					'templates_id' => $parentPageObj->template->id,
+					'status' => $parentPageObj->status,
+					'name' => $parentPageObj->name,
+				);
+			}
+
+			// prepend child page name to URL segments
+			array_unshift($rewindSegments, $childPage['name']);
+
+			// set result to the parent page and try its template
+			$result['page'] = $parentPage;
+			$result['urlSegments'] = $rewindSegments;
+			$result['urlSegmentStr'] = implode('/', $rewindSegments);
+			$result['errors'] = array();
+			$result['pathAdd'] = '';
+			$result['redirect'] = '';
+			$this->template = null;
+			$this->admin = null;
+
+			$parentTemplate = $templates->get($parentPage['templates_id']);
+			if(!$parentTemplate) continue;
+
+			// check if parent template allows URL segments
+			if(!$parentTemplate->urlSegments && $parentTemplate->name !== 'admin') continue;
+
+			// check if parent template validates the combined URL segment string
+			if(!$parentTemplate->isValidUrlSegmentStr($result['urlSegmentStr'])) continue;
+
+			// parent template accepts these URL segments — rebuild the path
+			$this->template = $parentTemplate;
+			$path = $this->pages->getPath($parentPage['id']);
+			$result['page']['path'] = $path;
+
+			// re-apply template validation with the new state
+			$path = $this->applyResultTemplate($path);
+			if($path !== false) {
+				$this->addResultNote('Rewound URL segments to parent page (issue #1333)');
+				return $path;
+			}
+		}
+
+		// all rewind attempts failed — restore original state
+		$result['page'] = $origPage;
+		$result['urlSegments'] = $origUrlSegments;
+		$result['urlSegmentStr'] = $origUrlSegmentStr;
+		$result['errors'] = $origErrors;
+		$result['pathAdd'] = $origPathAdd;
+		$result['redirect'] = $origRedirect;
+		$this->template = $origTemplate;
+		$this->admin = $origAdmin;
+
+		return false;
+	}
+
+	/**
 	 * Apply result for homepage match
 	 *
 	 */
@@ -898,6 +1027,13 @@ class PagesPathFinder extends Wire {
 
 		if($path !== false) $path = $this->applyResultLanguage($path);
 		if($path !== false) $path = $this->applyResultTemplate($path);
+
+		// if URL segments failed validation, try rewinding matched pages into URL segments
+		// so that a parent page's template can handle them (issue #1333)
+		if($path === false && $this->canRewindUrlSegments()) {
+			$path = $this->rewindUrlSegments();
+		}
+
 		if($path === false) $result['response'] = 404;
 
 		$response = &$result['response'];
