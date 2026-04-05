@@ -2127,7 +2127,7 @@ class Modules extends WireArray {
 			$query = $database->prepare('DELETE FROM modules WHERE class=:class LIMIT 1');
 			$query->bindValue(':class', $class, \PDO::PARAM_STR);
 		}
-		$result = $query->execute() ? $query->rowCount() > 0 : false;
+		$result = $database->execute($query) ? $query->rowCount() > 0 : false;
 		$query->closeCursor();
 		return $result;	
 	}
@@ -2498,7 +2498,7 @@ class Modules extends WireArray {
 		$query->bindValue(':name', ".$cacheName");
 		$query->bindValue(':data', $data);
 		$query->bindValue(':flags', Modules::flagsSystemCache);
-		return $query->execute();
+		return $database->execute($query);
 	}
 
 	protected $saveCacheReady = false;
@@ -2521,9 +2521,10 @@ class Modules extends WireArray {
 		}
 		if(empty($data)) {
 			$sql = "SELECT data FROM modules WHERE class=:name";
-			$query = $this->wire()->database->prepare($sql);
+			$database = $this->wire()->database;
+			$query = $database->prepare($sql);
 			$query->bindValue(':name', ".$cacheName");
-			$query->execute();
+			$database->execute($query);
 			$data = $query->fetchColumn();
 			$query->closeCursor();
 		}

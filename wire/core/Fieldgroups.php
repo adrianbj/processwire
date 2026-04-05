@@ -250,9 +250,9 @@ class Fieldgroups extends WireSaveableItemsLookup {
 		if($fieldgroup->id) { 
 			// load context data to populate back after fieldgroup save
 			$sql = 'SELECT fields_id, data FROM fieldgroups_fields WHERE fieldgroups_id=:fieldgroups_id'; 
-			$query = $database->prepare($sql); 
-			$query->bindValue(':fieldgroups_id', (int) $fieldgroup->id, \PDO::PARAM_INT); 
-			$query->execute();
+			$query = $database->prepare($sql);
+			$query->bindValue(':fieldgroups_id', (int) $fieldgroup->id, \PDO::PARAM_INT);
+			$database->execute($query);
 			/** @noinspection PhpAssignmentInConditionInspection */
 			while($row = $query->fetch(\PDO::FETCH_ASSOC)) {
 				$fields_id = (int) $row['fields_id'];
@@ -282,8 +282,8 @@ class Fieldgroups extends WireSaveableItemsLookup {
 					$query->bindValue(":data", $data, \PDO::PARAM_STR);
 				}
 				$query->bindValue(":fieldgroups_id", $fieldgroups_id, \PDO::PARAM_INT);
-				$query->bindValue(":fields_id", $fields_id, \PDO::PARAM_INT); 
-				$query->execute();
+				$query->bindValue(":fields_id", $fields_id, \PDO::PARAM_INT);
+				$database->execute($query);
 			}
 		}
 
@@ -338,7 +338,7 @@ class Fieldgroups extends WireSaveableItemsLookup {
 		$database = $this->wire()->database; 
 		$query = $database->prepare("DELETE FROM fieldgroups_fields WHERE fields_id=:fields_id"); // QA
 		$query->bindValue(":fields_id", $field->id, \PDO::PARAM_INT);
-		$result = $query->execute();
+		$result = $database->execute($query);
 		return $result;
 	}
 
@@ -366,9 +366,10 @@ class Fieldgroups extends WireSaveableItemsLookup {
 			'WHERE fieldgroups_id=:fieldgroups_id ' . 
 			'AND data IS NOT NULL';
 		
-		$query = $this->wire()->database->prepare($sql);
+		$database = $this->wire()->database;
+		$query = $database->prepare($sql);
 		$query->bindValue(':fieldgroups_id', $item->id, \PDO::PARAM_INT);
-		$query->execute();
+		$database->execute($query);
 		
 		$rows = $query->fetchAll(\PDO::FETCH_ASSOC);
 		$query->closeCursor();
@@ -385,7 +386,7 @@ class Fieldgroups extends WireSaveableItemsLookup {
 			$query->bindValue(':fieldgroups_id', (int) $fieldgroup->id, \PDO::PARAM_INT);
 			$query->bindValue(':fields_id', (int) $row['fields_id'], \PDO::PARAM_INT);
 			$query->bindValue(':sort', (int) $row['sort'], \PDO::PARAM_INT);
-			$query->execute();
+			$database->execute($query);
 		}
 		
 		return $fieldgroup;

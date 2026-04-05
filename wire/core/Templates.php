@@ -489,7 +489,7 @@ class Templates extends WireSaveableItems {
 		$database = $this->wire()->database;
 		$query = $database->prepare("SELECT COUNT(*) AS total FROM pages WHERE templates_id=:template_id"); // QA
 		$query->bindValue(":template_id", $tpl->id, \PDO::PARAM_INT);
-		$query->execute();
+		$database->execute($query);
 		return (int) $query->fetchColumn();	
 	}
 

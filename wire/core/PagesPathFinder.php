@@ -356,7 +356,7 @@ class PagesPathFinder extends Wire {
 			$query->bindValue(":$bindKey", $bindValue);
 		}
 
-		$query->execute();
+		$database->execute($query);
 		$rowCount = (int) $query->rowCount();
 		$row = $query->fetch(\PDO::FETCH_ASSOC);
 		$query->closeCursor();
@@ -1194,7 +1194,7 @@ class PagesPathFinder extends Wire {
 		$sql = "SELECT $cols FROM pages WHERE name=:name AND (parent_id=1 OR (status & $unique))";
 		$query = $database->prepare($sql);
 		$query->bindValue(':name', $name);
-		$query->execute();
+		$database->execute($query);
 
 		$row = $query->fetch(\PDO::FETCH_ASSOC);
 		$query->closeCursor();
@@ -1672,10 +1672,11 @@ class PagesPathFinder extends Wire {
 		$col = $langName === 'default' ? 'status' : "status$languageId";
 		$page = $this->pages->cacher()->getCache((int) $pageId);
 		if($page) return $page->get($col);
-		$query = $this->wire()->database->prepare("SELECT `$col` FROM pages WHERE id=:id");
+		$database = $this->wire()->database;
+		$query = $database->prepare("SELECT `$col` FROM pages WHERE id=:id");
 		$query->bindValue(':id', $pageId, \PDO::PARAM_INT);
 		try {
-			$query->execute();
+			$database->execute($query);
 			$status = (int) $query->fetchColumn();
 			$query->closeCursor();
 		} catch(\Exception $e) {
@@ -1788,7 +1789,7 @@ class PagesPathFinder extends Wire {
 
 			$query = $database->prepare($sql);
 			$query->bindValue(':id', (int) $config->rootPageID, \PDO::PARAM_INT);
-			$query->execute();
+			$database->execute($query);
 
 			$row = $query->fetch(\PDO::FETCH_ASSOC);
 			$query->closeCursor();

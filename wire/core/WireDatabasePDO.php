@@ -829,9 +829,9 @@ class WireDatabasePDO extends Wire implements WireDatabase {
 	public function supportsTransaction($table = '') {
 		$engine = '';
 		if($table) {
-			$query = $this->pdoReader()->prepare('SHOW TABLE STATUS WHERE name=:name'); 
-			$query->bindValue(':name', $table); 
-			$query->execute();
+			$query = $this->pdoReader()->prepare('SHOW TABLE STATUS WHERE name=:name');
+			$query->bindValue(':name', $table);
+			$this->execute($query);
 			if($query->rowCount()) {
 				$row = $query->fetch(\PDO::FETCH_ASSOC);
 				$engine = empty($row['engine']) ? '' : $row['engine'];
@@ -1000,17 +1000,32 @@ class WireDatabasePDO extends Wire implements WireDatabase {
 				$result = $query->execute();
 			} catch(\PDOException $e) {
 				$result = false;
+				$code = $e->getCode();
+				$msg = $e->getMessage();
+				$sqlState = is_string($code) ? substr($code, 0, 5) : '';
+				$errCode = (int) $code;
 				if($query->errorCode() == '42S22') {
 					// unknown column error
 					$errorInfo = $query->errorInfo();
 					if(preg_match('/[\'"]([_a-z0-9]+\.[_a-z0-9]+)[\'"]/i', $errorInfo[2], $matches)) {
 						$this->unknownColumnError($matches[1]);
 					}
-				} else if($e->getCode() === 'HY000' && $tries < $maxTries) {
-					// mysql server has gone away
-					$this->reset();
-					$tryAgain = true;
-					$tries++;
+				} else if($tries < $maxTries) {
+					$isGoneAway = $code === 'HY000' || $errCode === 2006
+						|| stripos($msg, 'MySQL server has gone away') !== false;
+					$isCommLinkFailure = $sqlState === '08S01' || $errCode === 1053;
+					$isDeadlock = $sqlState === '40001' || $errCode === 1213;
+					if($isGoneAway || $isCommLinkFailure) {
+						// connection lost — reconnect and retry
+						$this->reset();
+						$tryAgain = true;
+						$tries++;
+					} else if($isDeadlock) {
+						// deadlock — retry with backoff (no reconnect needed)
+						usleep(100000 * ($tries + 1));
+						$tryAgain = true;
+						$tries++;
+					}
 				}
 				if($tryAgain) {
 					// we will try again on next iteration
@@ -1143,7 +1158,7 @@ class WireDatabasePDO extends Wire implements WireDatabase {
 		$sql = "SHOW COLUMNS FROM $table " . ($getColumn ? 'WHERE Field=:column' : '');
 		$query = $this->prepare($sql);
 		if($getColumn) $query->bindValue(':column', $getColumn);
-		$query->execute();
+		$this->execute($query);
 		while($col = $query->fetch(\PDO::FETCH_ASSOC)) {
 			$name = $col['Field'];
 			if($verbose === 2) {
@@ -1191,8 +1206,8 @@ class WireDatabasePDO extends Wire implements WireDatabase {
 		$table = $this->escapeTable($table);
 		$sql = "SHOW INDEX FROM `$table` " . ($getIndex ? 'WHERE Key_name=:name' : '');
 		$query = $this->prepare($sql);
-		if($getIndex) $query->bindValue(':name', $getIndex); 
-		$query->execute();
+		if($getIndex) $query->bindValue(':name', $getIndex);
+		$this->execute($query);
 		while($row = $query->fetch(\PDO::FETCH_ASSOC)) {
 			$name = $row['Key_name'];
 			if($verbose === 2) {
@@ -1306,7 +1321,7 @@ class WireDatabasePDO extends Wire implements WireDatabase {
 		try {
 			$query = $this->prepare("SHOW COLUMNS FROM `$table` WHERE Field=:column");
 			$query->bindValue(':column', $column, \PDO::PARAM_STR);
-			$query->execute();
+			$this->execute($query);
 			$numRows = (int) $query->rowCount();
 			if($numRows) $exists = $getInfo ? $query->fetch(\PDO::FETCH_ASSOC) : true;
 			$query->closeCursor();
@@ -1353,7 +1368,7 @@ class WireDatabasePDO extends Wire implements WireDatabase {
 		$query = $this->prepare("SHOW INDEX FROM `$table` WHERE Key_name=:name");
 		$query->bindValue(':name', $indexName, \PDO::PARAM_STR);
 		try {
-			$query->execute();
+			$this->execute($query);
 			$numRows = (int) $query->rowCount();
 			if($numRows && $getInfo) {
 				$exists = array();
@@ -1521,7 +1536,7 @@ class WireDatabasePDO extends Wire implements WireDatabase {
 			}
 			if(!$stopwords) {
 				$query = $this->prepare('SELECT value FROM INFORMATION_SCHEMA.INNODB_FT_DEFAULT_STOPWORD');
-				$query->execute();
+				$this->execute($query);
 				$stopwords = $query->fetchAll(\PDO::FETCH_COLUMN, 0);
 				$query->closeCursor();
 				if($cache) $cache->save('InnoDB.stopwords', implode(',', $stopwords), WireCache::expireDaily);
@@ -1715,7 +1730,7 @@ class WireDatabasePDO extends Wire implements WireDatabase {
 		if($cache && isset($this->variableCache[$name])) return $this->variableCache[$name];
 		$query = $this->prepare('SHOW VARIABLES WHERE Variable_name=:name');
 		$query->bindValue(':name', $name);
-		$query->execute();
+		$this->execute($query);
 		if($query->rowCount()) {
 			list(,$value) = $query->fetch(\PDO::FETCH_NUM);
 			$this->variableCache[$name] = $value;

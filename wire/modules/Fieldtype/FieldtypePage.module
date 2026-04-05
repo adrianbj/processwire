@@ -91,11 +91,11 @@ class FieldtypePage extends FieldtypeMulti implements Module, ConfigurableModule
 			// delete references to this page
 			$query = $database->prepare("DELETE FROM `$table` WHERE data=:page_id");
 			$query->bindValue(":page_id", $page_id, \PDO::PARAM_INT);
-			$query->execute();
+			$database->execute($query);
 			// delete references this page is keeping to other pages
 			$query = $database->prepare("DELETE FROM `$table` WHERE pages_id=:page_id");
 			$query->bindValue(":page_id", $page_id, \PDO::PARAM_INT);
-			$query->execute();
+			$database->execute($query);
 		}	
 	}
 
@@ -1187,13 +1187,14 @@ class FieldtypePage extends FieldtypeMulti implements Module, ConfigurableModule
 		
 		$where = implode(' OR ', $wheres);
 		$sql = "SELECT id, $subfield FROM pages WHERE $where GROUP BY $subfield";
-		$query = $this->wire()->database->prepare($sql);
+		$database = $this->wire()->database;
+		$query = $database->prepare($sql);
 		
 		foreach($binds as $bindKey => $bindValue) {
 			$query->bindValue($bindKey, $bindValue);
 		}
 		
-		$query->execute();
+		$database->execute($query);
 		$valids = array();
 		
 		while($row = $query->fetch(\PDO::FETCH_NUM)) {
@@ -1732,7 +1733,7 @@ class FieldtypePage extends FieldtypeMulti implements Module, ConfigurableModule
 
 				$sql = "SELECT $table.pages_id, $table.data FROM $table LEFT JOIN pages ON $table.$key=pages.id WHERE pages.id IS NULL";
 				$query = $database->prepare($sql); 
-				$query->execute();
+				$database->execute($query);
 				$numCleaned = 0;
 
 				/** @noinspection PhpAssignmentInConditionInspection */
@@ -1741,7 +1742,7 @@ class FieldtypePage extends FieldtypeMulti implements Module, ConfigurableModule
 					$q = $database->prepare("DELETE FROM $table WHERE pages_id=:pages_id AND data=:data"); 
 					$q->bindValue(':pages_id', $pages_id, \PDO::PARAM_INT); 
 					$q->bindValue(':data', $data, \PDO::PARAM_INT); 
-					$q->execute();
+					$database->execute($q);
 					$numCleaned++;
 				}
 
@@ -1826,7 +1827,7 @@ class FieldtypePage extends FieldtypeMulti implements Module, ConfigurableModule
 			$sql = "SELECT COUNT(*) FROM `$table` WHERE data=:id";
 			$query = $database->prepare($sql);
 			$query->bindValue(':id', $page->id, \PDO::PARAM_INT);
-			$query->execute();
+			$database->execute($query);
 
 			$cnt = (int) $query->fetchColumn();
 			if($cnt > 0) {

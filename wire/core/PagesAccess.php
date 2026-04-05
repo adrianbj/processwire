@@ -87,7 +87,7 @@ class PagesAccess extends Wire {
 
 		if($parent_id == 1) {
 			// if we're going to be rebuilding the entire tree, then just delete all of them now
-			$database->exec("DELETE FROM pages_access"); // QA
+			$database->execute($database->prepare("DELETE FROM pages_access")); // QA
 			$doDeletions = false;
 		}
 
@@ -110,9 +110,9 @@ class PagesAccess extends Wire {
 				"WHERE pages.parent_id=:parent_id " .
 				"GROUP BY pages.id ";
 
-		$query = $database->prepare($sql); 
+		$query = $database->prepare($sql);
 		$query->bindValue(":parent_id", $parent_id, \PDO::PARAM_INT);
-		$query->execute();
+		$database->execute($query);
 
 		while($row = $query->fetch(\PDO::FETCH_NUM)) {
 
@@ -150,12 +150,12 @@ class PagesAccess extends Wire {
 			}
 			$sql = rtrim($sql, ",") . " " . "ON DUPLICATE KEY UPDATE templates_id=VALUES(templates_id) ";
 			$query = $database->prepare($sql);
-			$query->execute();
+			$database->execute($query);
 
 		} else if(count($deletions)) {
 			$sql = "DELETE FROM pages_access WHERE pages_id IN(" . implode(',', $deletions) . ')';
 			$query = $database->prepare($sql);
-			$query->execute();
+			$database->execute($query);
 		}
 	}
 
@@ -210,7 +210,7 @@ class PagesAccess extends Wire {
 		}
 
 		$query->bindValue(":page_id", $page_id, \PDO::PARAM_INT);
-		$query->execute();
+		$database->execute($query);
 
 		if($page->numChildren > 0) { 
 
@@ -234,9 +234,9 @@ class PagesAccess extends Wire {
 	 */
 	public function deletePage(Page $page) {
 		$database = $this->wire()->database;
-		$query = $database->prepare("DELETE FROM pages_access WHERE pages_id=:page_id"); 
-		$query->bindValue(":page_id", $page->id, \PDO::PARAM_INT); 
-		$query->execute();
+		$query = $database->prepare("DELETE FROM pages_access WHERE pages_id=:page_id");
+		$query->bindValue(":page_id", $page->id, \PDO::PARAM_INT);
+		$database->execute($query);
 	}
 
 	/**

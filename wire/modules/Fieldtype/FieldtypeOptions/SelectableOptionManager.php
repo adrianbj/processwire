@@ -164,10 +164,10 @@ class SelectableOptionManager extends Wire {
 
 		$query = $database->prepare($sql);
 		$query->bindValue(':fields_id', $field->id);
-		$query->execute();
+		$database->execute($query);
 
 		while($row = $query->fetch(\PDO::FETCH_ASSOC)) {
-		
+
 			$option = $this->arrayToOption($row); 
 
 			if(count($sorted)) {
@@ -603,7 +603,7 @@ class SelectableOptionManager extends Wire {
 				$query->bindValue(":$name", $value); 
 			}
 			try {
-				if($query->execute()) $cnt++;
+				if($database->execute($query)) $cnt++;
 			} catch(\Exception $e) {
 				$this->error("Option $option->id '$option->title': " . $e->getMessage());
 				if(strpos($e->getMessage(), '42S22')) $this->updateLanguages();
@@ -660,7 +660,7 @@ class SelectableOptionManager extends Wire {
 		// delete from field_[fieldName] table
 		$sql = "DELETE FROM `$table` WHERE data IN($cleanIDs)";
 		$query = $database->prepare($sql);
-		$query->execute();
+		$database->execute($query);
 		$cnt = $query->rowCount();
 		$this->message("Deleted $cnt rows from table $table", Notice::debug);
 
@@ -669,7 +669,7 @@ class SelectableOptionManager extends Wire {
 		$sql = "DELETE FROM `$table` WHERE fields_id=:fields_id AND option_id IN($cleanIDs)";
 		$query = $database->prepare($sql);
 		$query->bindValue(':fields_id', $field->id);
-		$query->execute();
+		$database->execute($query);
 		$cnt = $query->rowCount();
 		$this->message("Deleted $cnt rows from table $table", Notice::debug);
 		
@@ -692,7 +692,7 @@ class SelectableOptionManager extends Wire {
 		$sql = "DELETE FROM `$table` WHERE fields_id=:fields_id";
 		$query = $database->prepare($sql);
 		$query->bindValue(':fields_id', $field->id, \PDO::PARAM_INT);
-		$query->execute();
+		$database->execute($query);
 		$cnt = $query->rowCount();
 		$this->message("Deleted $cnt row(s) from table $table", Notice::debug);
 		return $cnt;
@@ -729,7 +729,7 @@ class SelectableOptionManager extends Wire {
 
 			$query = $database->prepare($sql);
 			$query->bindValue(':fields_id', $field->id);
-			$query->execute();
+			$database->execute($query);
 
 			list($max) = $query->fetch(\PDO::FETCH_NUM);
 			$query->closeCursor();
@@ -761,7 +761,7 @@ class SelectableOptionManager extends Wire {
 			$query->bindValue(':value', $option->value); 
 			
 			try {
-				if($query->execute()) $cnt++;
+				if($database->execute($query)) $cnt++;
 				$option->id = $database->lastInsertId();
 
 			} catch(\Exception $e) {
@@ -863,7 +863,7 @@ class SelectableOptionManager extends Wire {
 		$indexes = $database->getIndexes($table, true);
 		
 		$query = $database->prepare("SHOW COLUMNS FROM $table LIKE 'title%'");
-		$query->execute();
+		$database->execute($query);
 		$rows = array();
 		$sqls = array();
 
