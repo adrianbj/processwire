@@ -462,9 +462,11 @@ class WireDatabasePDO extends Wire implements WireDatabase {
 			$this->queryLogMax = (int) $config->dbQueryLogMax;
 		}
 
-		if($config->debug && $pdo) {
-			// custom PDO statement for debug mode
-			$this->debugMode = true;
+		if($pdo) {
+			// custom PDO statement tracks bound values so statements can re-prepare
+			// themselves on a new connection if theirs is lost (see execute method),
+			// and it also logs queries with populated params when in debug mode
+			if($config->debug) $this->debugMode = true;
 			$pdo->setAttribute(
 				\PDO::ATTR_STATEMENT_CLASS,
 				array(__NAMESPACE__ . "\\WireDatabasePDOStatement", array($this))
@@ -1023,6 +1025,19 @@ class WireDatabasePDO extends Wire implements WireDatabase {
 					} else if($errorType === 'gone-away' || $errorType === 'comm-failure') {
 						// connection lost — reconnect and retry
 						$this->reset();
+						if($query instanceof WireDatabasePDOStatement) {
+							// have the statement re-prepare itself on the new connection so the
+							// retry (and the caller’s existing reference to it) can succeed;
+							// a plain PDOStatement remains bound to the lost connection and
+							// its retry below can only fail again
+							try {
+								$sql = $query->queryString;
+								$query->reprepare($this->pdoType($sql));
+							} catch(\Exception $healException) {
+								// connection may still be down: leave it to the next execute()
+								// attempt to fail so the loop can retry or give up
+							}
+						}
 						$tryAgain = true;
 						$tries++;
 					}

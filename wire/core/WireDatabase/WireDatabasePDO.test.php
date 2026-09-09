@@ -217,6 +217,70 @@ class WireTest_WireDatabasePDO extends WireTest {
 
 		$e = $this->fakePDOException('Incorrect string value', 'HY000', 1366);
 		$this->check('getRetryableErrorType() blank for generic HY000 error', '', $dialect->getRetryableErrorType($e));
+
+		// ===== SELF-HEALING STATEMENTS =====
+
+		$config = $this->wire()->config;
+
+		$database->exec("INSERT INTO `$table` (name, qty) VALUES ('heal-a', 5), ('heal-b', 7)");
+
+		$stmt = $database->prepare("SELECT name FROM `$table` WHERE qty=:qty");
+		$this->check('prepare() returns WireDatabasePDOStatement', true, $stmt instanceof WireDatabasePDOStatement);
+
+		$killer = new \PDO(
+			WireDatabasePDO::dsn(array(
+				'name' => $config->dbName,
+				'host' => $config->dbHost,
+				'port' => $config->dbPort,
+				'socket' => $config->dbSocket,
+			)),
+			$config->dbUser,
+			$config->dbPass
+		);
+
+		$connId = (int) $database->pdo()->query('SELECT CONNECTION_ID()')->fetchColumn();
+		$stmt->bindValue(':qty', 5, \PDO::PARAM_INT);
+		$killer->exec("KILL $connId");
+		usleep(100000);
+
+		$healed = false;
+		$healErr = '';
+		try {
+			$healed = $database->execute($stmt);
+		} catch(\Exception $e) {
+			$healErr = $e->getMessage();
+		}
+		$this->check("execute() heals statement after lost connection $healErr", true, $healed);
+		$this->check('fetch works after healing', 'heal-a', $healed ? $stmt->fetchColumn() : null);
+
+		// statement reuse after healing: rebind and re-execute
+		$reused = false;
+		try {
+			$stmt->closeCursor();
+			$stmt->bindValue(':qty', 7, \PDO::PARAM_INT);
+			$reused = $database->execute($stmt);
+		} catch(\Exception $e) {
+			$reused = false;
+		}
+		$this->check('healed statement can be rebound and re-executed', true, $reused);
+		$this->check('fetch works after healed statement reuse', 'heal-b', $reused ? $stmt->fetchColumn() : null);
+
+		// rowCount on a healed write statement
+		$stmt2 = $database->prepare("UPDATE `$table` SET qty=qty+1 WHERE name=:name");
+		$stmt2->bindValue(':name', 'heal-a');
+		$connId = (int) $database->pdo()->query('SELECT CONNECTION_ID()')->fetchColumn();
+		$killer->exec("KILL $connId");
+		usleep(100000);
+		$healed2 = false;
+		try {
+			$healed2 = $database->execute($stmt2);
+		} catch(\Exception $e) {
+			$healed2 = false;
+		}
+		$this->check('healed write statement executes', true, $healed2);
+		$this->check('rowCount works after healing', 1, $healed2 ? $stmt2->rowCount() : null);
+
+		$database->exec("DELETE FROM `$table` WHERE name IN('heal-a', 'heal-b')");
 	}
 
 	/**
